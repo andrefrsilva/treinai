@@ -1,0 +1,621 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OSCE Virtual Patient Simulator</title>
+  <!-- External Libraries -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <style>
+    /* ---------- Global Styles ---------- */
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      background: #f0f0f0;
+    }
+    .container {
+      max-width: 800px;
+      margin: 20px auto;
+      padding: 20px;
+      background: #fff;
+      text-align: center;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+    }
+    h1 { margin-bottom: 20px; }
+    select, button {
+      font-size: 16px;
+      padding: 10px 15px;
+      margin: 10px;
+      cursor: pointer;
+    }
+    /* ---------- OSCE Fullscreen Mode ---------- */
+    #osceFullscreen {
+      display: none;
+      position: fixed;
+      top: 0; left: 0;
+      width: 100%;
+      height: 100%;
+      background: #fff;
+      z-index: 9999;
+      flex-direction: column;
+    }
+    /* Header with station info, timer and control buttons */
+    #osceHeader {
+      background: #222;
+      color: #fff;
+      padding: 10px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    #phaseTimer {
+      font-size: 24px;
+      font-weight: bold;
+    }
+    #skipBtn, #exitBtn {
+      background: #007bff;
+      border: none;
+      color: #fff;
+      padding: 8px 12px;
+      cursor: pointer;
+      margin-left: 10px;
+    }
+    /* Content area */
+    #osceContent {
+      flex: 1;
+      position: relative;
+      padding: 20px;
+      overflow: auto;
+      background: #fff;
+    }
+    /* Preparation Phase */
+    #preparationPhase {
+      text-align: center;
+      margin-top: 60px;
+    }
+    #vinhetaText {
+      font-size: 24px;
+      margin: 40px 0;
+      color: #333;
+    }
+    /* ---------- Conversation Phase UI ---------- */
+    #conversationUI {
+      display: none;
+      position: relative;
+      background: #fff;
+      height: 100%;
+    }
+    /* ---------- Bubble Button Styles ---------- */
+    .bubble {
+      position: absolute;
+      width: 150px;
+      height: 150px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #fff;
+      font-size: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      border: 5px solid transparent;
+      transition: border 0.2s, background 0.2s;
+      background: #000;  /* default black */
+    }
+    /* Top bubble ("Doente") */
+    .bubble.top {
+      top: 10%;
+    }
+    /* When TTS is playing, add the speaking class */
+    .bubble.top.speaking {
+      background: grey;
+      animation: pulse 1s infinite;
+    }
+    /* Bottom bubble ("Médico") */
+    .bubble.bottom {
+      bottom: 10%;
+    }
+    /* When recording, bottom bubble gets red and pulses */
+    .bubble.bottom.recording {
+      background: red;
+      animation: pulse 1s infinite;
+    }
+    @keyframes pulse {
+      0% { transform: translateX(-50%) scale(1); }
+      50% { transform: translateX(-50%) scale(1.1); }
+      100% { transform: translateX(-50%) scale(1); }
+    }
+    /* ---------- Final Transcript & Evaluation ---------- */
+    #finalSection {
+      display: none;
+    }
+    #evaluationLoading {
+      display: none;
+      font-size: 24px;
+      color: #222;
+      margin: 20px 0;
+    }
+    /* Criteria Table */
+    #criteriaTable {
+      margin: 20px auto;
+      border-collapse: collapse;
+      width: 90%;
+    }
+    #criteriaTable th, #criteriaTable td {
+      border: 1px solid #ccc;
+      padding: 8px;
+      text-align: left;
+    }
+    #criteriaTable th {
+      background: #f0f0f0;
+    }
+  </style>
+</head>
+<body>
+  <!-- Dashboard -->
+  <div id="dashboard" class="container">
+    <h1>OSCE Virtual Patient Simulator</h1>
+    <p>Selecione a Disciplina:</p>
+    <select id="disciplinaSelect">
+      <option value="">Carregando...</option>
+    </select>
+    <br>
+    <button id="startBtn">Iniciar OSCE</button>
+  </div>
+
+  <!-- OSCE Fullscreen Mode -->
+  <div id="osceFullscreen">
+    <div id="osceHeader">
+      <span id="stationInfo">Estação # - Disciplina</span>
+      <span id="phaseTimer">01:00</span>
+      <div>
+        <button id="skipBtn">Saltar</button>
+        <button id="exitBtn">Sair</button>
+      </div>
+    </div>
+    <div id="osceContent">
+      <!-- Preparation Phase -->
+      <div id="preparationPhase">
+        <div id="vinhetaText"></div>
+      </div>
+      <!-- Conversation Phase -->
+      <div id="conversationUI">
+        <div class="bubble top" id="bubbleTop">Doente</div>
+        <div class="bubble bottom" id="bubbleBottom">Médico</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Final Transcript & Evaluation -->
+  <div id="finalSection" class="container">
+    <h2>Transcrição & Avaliação</h2>
+    <div id="criteriaContainer"></div>
+    <div id="evaluationResult"></div>
+    <button id="downloadPdfBtn">Download PDF</button>
+    <button id="restartBtn">Reiniciar</button>
+  </div>
+
+  <!-- Evaluation Loading Message -->
+  <div id="evaluationLoading" class="container">Aguarde... a avaliar a conversa.</div>
+
+  <script>
+    /********* CONFIGURATION & GLOBAL VARIABLES *********/
+    // Audio URLs – ensure these are accessible and CORS‑enabled.
+    const audioAluno = "https://github.com/andrefrsilva/oscelinda/raw/refs/heads/main/2%20-%20aluno.mp3";
+    const audioPodeComecar = "https://github.com/andrefrsilva/oscelinda/raw/refs/heads/main/3%20-%20pode%20come%C3%A7ar.mp3";
+    const audioFalta1Minuto = "https://github.com/andrefrsilva/oscelinda/raw/refs/heads/main/4%20-%20falta%201%20minuto.mp3";
+    const audioPodeSair = "https://github.com/andrefrsilva/oscelinda/raw/refs/heads/main/6%20-%20pode%20sair%20AND%20Bull%20Fight%20Bugle%20Music.mp3";
+    
+        const EXCEL_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQ6kowYQMeiE6oN-ubTz5n597SdtcKBvTaN_aWR6Y5Yda4OWP8-_8Q-EnmdMezF0-vkEmtIMHighRRO/pub?output=xlsx";
+    
+    let excelData = [];
+    let selectedStation = null;
+    let transcriptHistory = [];
+    let currentPhase = "preparation"; // "preparation" or "conversation"
+    let prepCountdown = 60;
+    let convCountdown = 5 * 60;
+    let prepInterval, convInterval;
+    let recognition = null;
+    let isRecording = false;
+    let audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    let micAnalyser = null, playbackAnalyser = null;
+    let topAnimFrameId, bottomAnimFrameId;
+    const MAX_PULSE_SIZE = 150;
+    let currentOutputAudio = null;
+    let recordedText = "";
+    
+    /********* ELEMENT REFERENCES *********/
+    const disciplinaSelect = document.getElementById("disciplinaSelect");
+    const startBtn = document.getElementById("startBtn");
+    const dashboard = document.getElementById("dashboard");
+    const osceFullscreen = document.getElementById("osceFullscreen");
+    const stationInfo = document.getElementById("stationInfo");
+    const phaseTimer = document.getElementById("phaseTimer");
+    const skipBtn = document.getElementById("skipBtn");
+    const exitBtn = document.getElementById("exitBtn");
+    const preparationPhase = document.getElementById("preparationPhase");
+    const vinhetaText = document.getElementById("vinhetaText");
+    const conversationUI = document.getElementById("conversationUI");
+    const bubbleTop = document.getElementById("bubbleTop");
+    const bubbleBottom = document.getElementById("bubbleBottom");
+    const finalSection = document.getElementById("finalSection");
+    const downloadPdfBtn = document.getElementById("downloadPdfBtn");
+    const evaluationResult = document.getElementById("evaluationResult");
+    const evaluationLoading = document.getElementById("evaluationLoading");
+    const criteriaContainer = document.getElementById("criteriaContainer");
+    const restartBtn = document.getElementById("restartBtn");
+    
+    /********* LOAD EXCEL & POPULATE DROPDOWN *********/
+    fetch(EXCEL_URL, { mode: "cors", cache: "no-store" })
+      .then(response => {
+        if (!response.ok) throw new Error("Erro ao carregar Excel");
+        return response.arrayBuffer();
+      })
+      .then(buffer => {
+        const workbook = XLSX.read(new Uint8Array(buffer), { type: "array" });
+        const worksheet = workbook.Sheets["CASOS"];
+        if (!worksheet) {
+          disciplinaSelect.innerHTML = "<option>Erro: Sheet 'CASOS' não encontrada</option>";
+          return;
+        }
+        excelData = XLSX.utils.sheet_to_json(worksheet, { defval: "" });
+        const disciplinas = Array.from(new Set(excelData.map(row => row["Disciplina"].trim()))).sort();
+        if (disciplinas.length > 0) {
+          disciplinaSelect.innerHTML = disciplinas.map(d => `<option value="${d}">${d}</option>`).join("");
+        } else {
+          disciplinaSelect.innerHTML = "<option>Nenhuma disciplina encontrada</option>";
+        }
+      })
+      .catch(err => {
+        console.error("Erro ao carregar Excel:", err);
+        disciplinaSelect.innerHTML = "<option>Erro ao carregar Excel</option>";
+      });
+    
+    /********* START OSCE SESSION *********/
+    startBtn.addEventListener("click", async () => {
+      if (audioContext.state === "suspended") await audioContext.resume();
+      const selectedDisciplina = disciplinaSelect.value;
+      if (!selectedDisciplina) { alert("Selecione uma Disciplina."); return; }
+      const cases = excelData.filter(row => row["Disciplina"].trim() === selectedDisciplina);
+      if (cases.length === 0) { alert("Nenhum caso encontrado para esta Disciplina."); return; }
+      selectedStation = cases[Math.floor(Math.random() * cases.length)];
+      transcriptHistory = [];
+      transcriptHistory.push({
+        speaker: "SYSTEM",
+        text: `Estação OSCE – Disciplina: ${selectedStation["Disciplina"]}, Tema: ${selectedStation["Tema"]}, Probabilidade: ${selectedStation["Probabilidade"]}, Vinheta: ${selectedStation["Vinheta"]}, Ator: ${selectedStation["Ator"]}, Critérios: ${selectedStation["Critérios"]}`,
+        timestamp: new Date().toLocaleTimeString()
+      });
+      startOsce();
+    });
+    
+    function startOsce() {
+      dashboard.style.display = "none";
+      osceFullscreen.style.display = "flex";
+      if (osceFullscreen.requestFullscreen) osceFullscreen.requestFullscreen();
+      stationInfo.textContent = `Estação 1 - ${selectedStation["Disciplina"]}`;
+      vinhetaText.innerHTML = `<p>${selectedStation["Vinheta"]}</p>`;
+      phaseTimer.textContent = formatTime(prepCountdown);
+      // Play the "aluno" audio
+      playAudio(audioAluno);
+      prepInterval = setInterval(() => {
+        prepCountdown--;
+        phaseTimer.textContent = formatTime(prepCountdown);
+        if (prepCountdown <= 0) { clearInterval(prepInterval); startConversationPhase(); }
+      }, 1000);
+    }
+    
+    skipBtn.addEventListener("click", () => {
+      clearInterval(prepInterval);
+      startConversationPhase();
+    });
+    
+    function startConversationPhase() {
+      stopCurrentAudio();
+      playAudio(audioPodeComecar);
+      currentPhase = "conversation";
+      clearInterval(prepInterval);
+      preparationPhase.style.display = "none";
+      conversationUI.style.display = "block";
+      phaseTimer.textContent = formatTime(convCountdown);
+      convInterval = setInterval(() => {
+        convCountdown--;
+        phaseTimer.textContent = formatTime(convCountdown);
+        if (convCountdown === 60) { playAudio(audioFalta1Minuto); }
+        if (convCountdown <= 0) { clearInterval(convInterval); endOsce(); }
+      }, 1000);
+      setupSpeechRecognition();
+    }
+    
+    function endOsce() {
+      stopCurrentAudio();
+      speechSynthesis.cancel();
+      if (recognition) recognition.stop();
+      clearInterval(convInterval);
+      setTimeout(() => {
+        if (document.fullscreenElement) document.exitFullscreen();
+        osceFullscreen.style.display = "none";
+        evaluateTranscript();
+      }, 3000);
+    }
+    
+    function formatTime(sec) {
+      const m = Math.floor(sec / 60), s = sec % 60;
+      return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+    }
+    
+    /********* AUDIO PLAYBACK FUNCTIONS *********/
+    function playAudio(url) {
+      stopCurrentAudio();
+      currentOutputAudio = new Audio(url);
+      currentOutputAudio.play().catch(e => console.error("Erro ao tocar áudio:", e));
+      setupPlaybackAnalyser(currentOutputAudio);
+    }
+    
+    function stopCurrentAudio() {
+      if (currentOutputAudio && !currentOutputAudio.paused) currentOutputAudio.pause();
+      if (topAnimFrameId) cancelAnimationFrame(topAnimFrameId);
+      stopDoenteAnimation();
+    }
+    
+    function setupPlaybackAnalyser(audioEl) {
+      try {
+        const source = audioContext.createMediaElementSource(audioEl);
+        playbackAnalyser = audioContext.createAnalyser();
+        playbackAnalyser.fftSize = 256;
+        source.connect(playbackAnalyser);
+        playbackAnalyser.connect(audioContext.destination);
+        // Do not auto-trigger top bubble animation; TTS will call startDoenteAnimation.
+      } catch(e) { console.error("Playback analyser error:", e); }
+    }
+    
+    /********* TTS (Doente) Animation *********/
+    let doenteAnimActive = false;
+    function startDoenteAnimation() {
+      doenteAnimActive = true;
+      bubbleTop.classList.add("speaking"); // turns grey and pulsates via CSS
+    }
+    function stopDoenteAnimation() {
+      doenteAnimActive = false;
+      bubbleTop.classList.remove("speaking");
+      cancelAnimationFrame(topAnimFrameId);
+      bubbleTop.style.transform = "translateX(-50%) scale(1)";
+      bubbleTop.style.borderColor = "transparent";
+    }
+    
+    /********* RECORDING (Médico) Functions *********/
+    function setupSpeechRecognition() {
+      recordedText = "";
+      if ("webkitSpeechRecognition" in window) {
+        recognition = new webkitSpeechRecognition();
+        recognition.lang = "pt-PT";
+        recognition.interimResults = false;
+        recognition.continuous = true; // do not auto-stop
+        recognition.onresult = (event) => {
+          for (let i = event.resultIndex; i < event.results.length; i++) {
+            if (event.results[i].isFinal) {
+              recordedText += event.results[i][0].transcript.trim() + " ";
+            }
+          }
+        };
+        recognition.onerror = (e) => { console.error("Erro de reconhecimento:", e.error); };
+      }
+      bubbleBottom.addEventListener("click", toggleRecording);
+      document.addEventListener("keydown", (e) => { if (e.key === " ") { e.preventDefault(); toggleRecording(); } });
+    }
+    
+    function toggleRecording() {
+      // Stop any TTS audio first.
+      if (speechSynthesis.speaking) {
+        speechSynthesis.cancel();
+        stopDoenteAnimation();
+      }
+      stopCurrentAudio();
+      if (isRecording) {
+        // Stop recording only when user clicks again.
+        isRecording = false;
+        stopMedicoAnimation();
+        if (recognition) recognition.stop();
+        if (recordedText.trim() !== "") {
+          transcriptHistory.push({ speaker: "Médico", text: recordedText.trim(), timestamp: new Date().toLocaleTimeString() });
+          let temp = recordedText.trim();
+          recordedText = "";
+          callPatientLLM(temp);
+        }
+      } else {
+        // Start recording.
+        isRecording = true;
+        bubbleBottom.classList.add("recording"); // Change background to red.
+        startMedicoAnimation();
+        if (recognition) recognition.start();
+        if (!micAnalyser) {
+          navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+            const micSource = audioContext.createMediaStreamSource(stream);
+            micAnalyser = audioContext.createAnalyser();
+            micAnalyser.fftSize = 256;
+            micSource.connect(micAnalyser);
+            animateMedicoBubble();
+          }).catch(e => console.error("Erro ao acessar microfone:", e));
+        } else {
+          animateMedicoBubble();
+        }
+      }
+    }
+    
+    function startMedicoAnimation() {
+      bubbleBottom.classList.add("recording"); // red background via CSS class
+      bubbleBottom.classList.add("recordingPulse");
+    }
+    function stopMedicoAnimation() {
+      isRecording = false;
+      bubbleBottom.classList.remove("recording");
+      bubbleBottom.classList.remove("recordingPulse");
+      cancelAnimationFrame(bottomAnimFrameId);
+      bubbleBottom.style.transform = "translateX(-50%) scale(1)";
+      bubbleBottom.style.borderColor = "transparent";
+    }
+    
+    function animateMedicoBubble() {
+      if (!isRecording || !micAnalyser) return;
+      const dataArray = new Uint8Array(micAnalyser.frequencyBinCount);
+      micAnalyser.getByteFrequencyData(dataArray);
+      const avg = dataArray.reduce((sum, val) => sum + val, 0) / dataArray.length;
+      // Here you might vary the border color intensity or thickness based on avg.
+      bottomAnimFrameId = requestAnimationFrame(animateMedicoBubble);
+    }
+    
+    /********* CALL PATIENT LLM & TTS *********/
+    async function callPatientLLM(userInput) {
+      const prompt = `
+Contexto da conversa:
+${transcriptHistory.map(item => `${item.speaker}: ${item.text}`).join("\n")}
+
+Informações da Estação:
+Disciplina: ${selectedStation["Disciplina"]}
+Tema: ${selectedStation["Tema"]}
+Probabilidade: ${selectedStation["Probabilidade"]}
+Vinheta: ${selectedStation["Vinheta"]}
+Ator: ${selectedStation["Ator"]}
+Critérios: ${selectedStation["Critérios"]}
+
+Médico disse: ${userInput}
+
+Responda apenas com o que o paciente diz a seguir, sem introdução ou rótulos:
+      `;
+      try {
+        const res = await fetch("https://api.openai.com/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${OPENAI_API_KEY}`
+          },
+          body: JSON.stringify({
+            model: "gpt-4",
+            messages: [{ role: "user", content: prompt }],
+            max_tokens: 200,
+            temperature: 0.7
+          })
+        });
+        const data = await res.json();
+        const reply = data.choices?.[0]?.message?.content;
+        if (reply) {
+          transcriptHistory.push({ speaker: "Doente", text: reply, timestamp: new Date().toLocaleTimeString() });
+          playPatientAudio(reply);
+        }
+      } catch(e) { console.error("Erro ao chamar LLM do paciente:", e); }
+    }
+    
+    function playPatientAudio(text) {
+      if (useElevenLabs) {
+        // ElevenLabs TTS logic would go here.
+      } else {
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.lang = "pt-PT";
+        utterance.rate = 1;
+        utterance.pitch = 1;
+        utterance.onstart = () => { startDoenteAnimation(); }
+        utterance.onend = () => { stopDoenteAnimation(); }
+        speechSynthesis.speak(utterance);
+      }
+    }
+    
+    /********* EVALUATION & CRITERIA PARSING *********/
+    async function evaluateTranscript() {
+      evaluationLoading.style.display = "block";
+      const fullTranscript = transcriptHistory.map(item => `[${item.timestamp}] ${item.speaker}: ${item.text}`).join("\n\n");
+      // Detailed evaluator prompt:
+      const prompt = `
+Avalie a seguinte conversa de OSCE de forma objetiva, considerando cada critério. Cada critério está formatado como "_ [N] Critério", onde N é o peso para uma nota entre 0 e 5. Para cada critério, atribua uma nota de 0 a 5, multiplique essa nota pelo respectivo peso e some os resultados para obter uma nota final entre 0 e 20. Em seguida, apresente uma tabela com as colunas "Critério", "Nota (0-5)", "Peso" e "Parcial" (nota multiplicada pelo peso), e por fim informe a nota final e um comentário geral detalhado sobre o desempenho do estudante.
+Transcrição:
+${fullTranscript}
+      `;
+      try {
+        const res = await fetch("https://api.openai.com/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${OPENAI_API_KEY}`
+          },
+          body: JSON.stringify({
+            model: "gpt-4",
+            messages: [{ role: "user", content: prompt }],
+            max_tokens: 300,
+            temperature: 0.5
+          })
+        });
+        const data = await res.json();
+        const evaluation = data.choices?.[0]?.message?.content;
+        evaluationLoading.style.display = "none";
+        if (evaluation) {
+          evaluationResult.innerHTML = `<h3>Feedback do Avaliador</h3><p>${evaluation}</p>`;
+          transcriptHistory.push({ speaker: "AVALIADOR", text: evaluation, timestamp: new Date().toLocaleTimeString() });
+        }
+        parseAndDisplayCriteria(selectedStation["Critérios"]);
+        finalSection.style.display = "block";
+      } catch(e) {
+        console.error("Erro na avaliação:", e);
+        evaluationLoading.style.display = "none";
+      }
+    }
+    
+    function parseAndDisplayCriteria(criteriaText) {
+      if (!criteriaText) return;
+      const parts = criteriaText.split("_").map(s => s.trim()).filter(s => s);
+      const criteriaList = [];
+      const regex = /^\[(\d+(?:\.\d+)?)\]\s*(.+)$/;
+      parts.forEach(part => {
+        const match = part.match(regex);
+        if (match) {
+          criteriaList.push({ peso: match[1], criterio: match[2] });
+        }
+      });
+      if (criteriaList.length === 0) return;
+      let html = "<table id='criteriaTable'><thead><tr><th>Peso</th><th>Critério</th></tr></thead><tbody>";
+      criteriaList.forEach(item => {
+        html += `<tr><td>${item.peso}</td><td>${item.criterio}</td></tr>`;
+      });
+      html += "</tbody></table>";
+      criteriaContainer.innerHTML = html;
+    }
+    
+    downloadPdfBtn.addEventListener("click", () => {
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF({ unit: "pt", format: "a4" });
+      const margin = 40;
+      const pageWidth = doc.internal.pageSize.getWidth() - margin * 2;
+      let y = margin;
+      const now = new Date().toLocaleString();
+      doc.setFont("Helvetica", "normal");
+      doc.setFontSize(12);
+      doc.text(`Transcrição e Avaliação OSCE\nData: ${now}\n\n`, margin, y);
+      y += 40;
+      transcriptHistory.forEach(entry => {
+        const line = `[${entry.timestamp}] ${entry.speaker}: ${entry.text}`;
+        const lines = doc.splitTextToSize(line, pageWidth);
+        if (y + lines.length * 14 > doc.internal.pageSize.getHeight() - margin) {
+          doc.addPage();
+          y = margin;
+        }
+        doc.text(lines, margin, y);
+        y += lines.length * 14 + 10;
+      });
+      doc.save("transcript.pdf");
+    });
+    
+    restartBtn.addEventListener("click", () => {
+      location.reload();
+    });
+    
+    exitBtn.addEventListener("click", () => {
+      clearInterval(prepInterval);
+      clearInterval(convInterval);
+      if (document.fullscreenElement) document.exitFullscreen();
+      osceFullscreen.style.display = "none";
+      stopCurrentAudio();
+      speechSynthesis.cancel();
+      if (recognition) recognition.stop();
+      evaluateTranscript();
+    });
+  </script>
+</body>
+</html>

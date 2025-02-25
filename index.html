@@ -1,8 +1,8 @@
 <!DOCTYPE html>
 <html lang="pt">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>OSCE Virtual Patient Simulator</title>
   <!-- External Libraries -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -103,20 +103,12 @@
       transition: border 0.2s, background 0.2s;
       background: #000;  /* default black */
     }
-    /* Top bubble ("Doente") */
-    .bubble.top {
-      top: 10%;
-    }
-    /* When TTS is playing, add the speaking class */
+    /* Top bubble ("Doente") - normally black; when TTS plays, add class "speaking" to turn grey and pulsate */
     .bubble.top.speaking {
       background: grey;
       animation: pulse 1s infinite;
     }
-    /* Bottom bubble ("Médico") */
-    .bubble.bottom {
-      bottom: 10%;
-    }
-    /* When recording, bottom bubble gets red and pulses */
+    /* Bottom bubble ("Médico") - normally black; when recording, add class "recording" to turn red and pulsate */
     .bubble.bottom.recording {
       background: red;
       animation: pulse 1s infinite;
@@ -200,14 +192,20 @@
   <div id="evaluationLoading" class="container">Aguarde... a avaliar a conversa.</div>
 
   <script>
+    /********* BACKEND URL *********/
+    const BACKEND_URL = 'https://flask-backend-osce.andrefrsilva.repl.co';
+    
     /********* CONFIGURATION & GLOBAL VARIABLES *********/
-    // Audio URLs – ensure these are accessible and CORS‑enabled.
+    // Audio URLs (ensure these are accessible)
     const audioAluno = "https://github.com/andrefrsilva/oscelinda/raw/refs/heads/main/2%20-%20aluno.mp3";
     const audioPodeComecar = "https://github.com/andrefrsilva/oscelinda/raw/refs/heads/main/3%20-%20pode%20come%C3%A7ar.mp3";
     const audioFalta1Minuto = "https://github.com/andrefrsilva/oscelinda/raw/refs/heads/main/4%20-%20falta%201%20minuto.mp3";
     const audioPodeSair = "https://github.com/andrefrsilva/oscelinda/raw/refs/heads/main/6%20-%20pode%20sair%20AND%20Bull%20Fight%20Bugle%20Music.mp3";
     
-        const EXCEL_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQ6kowYQMeiE6oN-ubTz5n597SdtcKBvTaN_aWR6Y5Yda4OWP8-_8Q-EnmdMezF0-vkEmtIMHighRRO/pub?output=xlsx";
+    // Since the backend now holds the OpenAI key, the front end does not need it.
+    // const OPENAI_API_KEY = "YOUR_OPENAI_API_KEY_HERE";
+    
+    const EXCEL_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQ6kowYQMeiE6oN-ubTz5n597SdtcKBvTaN_aWR6Y5Yda4OWP8-_8Q-EnmdMezF0-vkEmtIMHighRRO/pub?output=xlsx";
     
     let excelData = [];
     let selectedStation = null;
@@ -221,7 +219,6 @@
     let audioContext = new (window.AudioContext || window.webkitAudioContext)();
     let micAnalyser = null, playbackAnalyser = null;
     let topAnimFrameId, bottomAnimFrameId;
-    const MAX_PULSE_SIZE = 150;
     let currentOutputAudio = null;
     let recordedText = "";
     
@@ -365,7 +362,7 @@
         playbackAnalyser.fftSize = 256;
         source.connect(playbackAnalyser);
         playbackAnalyser.connect(audioContext.destination);
-        // Do not auto-trigger top bubble animation; TTS will call startDoenteAnimation.
+        // TTS animation is triggered when TTS is actually played.
       } catch(e) { console.error("Playback analyser error:", e); }
     }
     
@@ -373,7 +370,7 @@
     let doenteAnimActive = false;
     function startDoenteAnimation() {
       doenteAnimActive = true;
-      bubbleTop.classList.add("speaking"); // turns grey and pulsates via CSS
+      bubbleTop.classList.add("speaking"); // Turns grey and pulsates via CSS
     }
     function stopDoenteAnimation() {
       doenteAnimActive = false;
@@ -390,7 +387,7 @@
         recognition = new webkitSpeechRecognition();
         recognition.lang = "pt-PT";
         recognition.interimResults = false;
-        recognition.continuous = true; // do not auto-stop
+        recognition.continuous = true; // Keep running until explicitly stopped
         recognition.onresult = (event) => {
           for (let i = event.resultIndex; i < event.results.length; i++) {
             if (event.results[i].isFinal) {
@@ -412,7 +409,7 @@
       }
       stopCurrentAudio();
       if (isRecording) {
-        // Stop recording only when user clicks again.
+        // User clicks again to stop recording.
         isRecording = false;
         stopMedicoAnimation();
         if (recognition) recognition.stop();
@@ -420,12 +417,12 @@
           transcriptHistory.push({ speaker: "Médico", text: recordedText.trim(), timestamp: new Date().toLocaleTimeString() });
           let temp = recordedText.trim();
           recordedText = "";
-          callPatientLLM(temp);
+          callPatientResponse(temp);
         }
       } else {
         // Start recording.
         isRecording = true;
-        bubbleBottom.classList.add("recording"); // Change background to red.
+        bubbleBottom.classList.add("recording"); // Change background to red
         startMedicoAnimation();
         if (recognition) recognition.start();
         if (!micAnalyser) {
@@ -443,9 +440,10 @@
     }
     
     function startMedicoAnimation() {
-      bubbleBottom.classList.add("recording"); // red background via CSS class
+      bubbleBottom.classList.add("recording"); // Ensures red background
       bubbleBottom.classList.add("recordingPulse");
     }
+    
     function stopMedicoAnimation() {
       isRecording = false;
       bubbleBottom.classList.remove("recording");
@@ -459,92 +457,65 @@
       if (!isRecording || !micAnalyser) return;
       const dataArray = new Uint8Array(micAnalyser.frequencyBinCount);
       micAnalyser.getByteFrequencyData(dataArray);
-      const avg = dataArray.reduce((sum, val) => sum + val, 0) / dataArray.length;
-      // Here you might vary the border color intensity or thickness based on avg.
+      // Here you could update border thickness based on audio level if desired.
       bottomAnimFrameId = requestAnimationFrame(animateMedicoBubble);
     }
     
-    /********* CALL PATIENT LLM & TTS *********/
-    async function callPatientLLM(userInput) {
-      const prompt = `
-Contexto da conversa:
-${transcriptHistory.map(item => `${item.speaker}: ${item.text}`).join("\n")}
-
-Informações da Estação:
-Disciplina: ${selectedStation["Disciplina"]}
-Tema: ${selectedStation["Tema"]}
-Probabilidade: ${selectedStation["Probabilidade"]}
-Vinheta: ${selectedStation["Vinheta"]}
-Ator: ${selectedStation["Ator"]}
-Critérios: ${selectedStation["Critérios"]}
-
-Médico disse: ${userInput}
-
-Responda apenas com o que o paciente diz a seguir, sem introdução ou rótulos:
-      `;
+    /********* BACKEND CALLS *********/
+    // Call backend endpoint for patient response.
+    async function callPatientResponse(userInput) {
+      const payload = {
+        transcriptHistory: transcriptHistory,
+        stationInfo: {
+          Disciplina: selectedStation["Disciplina"],
+          Tema: selectedStation["Tema"],
+          Probabilidade: selectedStation["Probabilidade"],
+          Vinheta: selectedStation["Vinheta"],
+          Ator: selectedStation["Ator"],
+          Critérios: selectedStation["Critérios"]
+        },
+        userInput: userInput
+      };
       try {
-        const res = await fetch("https://api.openai.com/v1/chat/completions", {
+        const res = await fetch(`${BACKEND_URL}/api/patient/response`, {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${OPENAI_API_KEY}`
-          },
-          body: JSON.stringify({
-            model: "gpt-4",
-            messages: [{ role: "user", content: prompt }],
-            max_tokens: 200,
-            temperature: 0.7
-          })
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
         });
         const data = await res.json();
-        const reply = data.choices?.[0]?.message?.content;
+        const reply = data.reply;
         if (reply) {
           transcriptHistory.push({ speaker: "Doente", text: reply, timestamp: new Date().toLocaleTimeString() });
           playPatientAudio(reply);
         }
-      } catch(e) { console.error("Erro ao chamar LLM do paciente:", e); }
-    }
-    
-    function playPatientAudio(text) {
-      if (useElevenLabs) {
-        // ElevenLabs TTS logic would go here.
-      } else {
-        const utterance = new SpeechSynthesisUtterance(text);
-        utterance.lang = "pt-PT";
-        utterance.rate = 1;
-        utterance.pitch = 1;
-        utterance.onstart = () => { startDoenteAnimation(); }
-        utterance.onend = () => { stopDoenteAnimation(); }
-        speechSynthesis.speak(utterance);
+      } catch(e) {
+        console.error("Erro ao chamar endpoint de resposta do paciente:", e);
       }
     }
     
-    /********* EVALUATION & CRITERIA PARSING *********/
+    // Call backend endpoint for conversation evaluation.
     async function evaluateTranscript() {
       evaluationLoading.style.display = "block";
       const fullTranscript = transcriptHistory.map(item => `[${item.timestamp}] ${item.speaker}: ${item.text}`).join("\n\n");
-      // Detailed evaluator prompt:
-      const prompt = `
-Avalie a seguinte conversa de OSCE de forma objetiva, considerando cada critério. Cada critério está formatado como "_ [N] Critério", onde N é o peso para uma nota entre 0 e 5. Para cada critério, atribua uma nota de 0 a 5, multiplique essa nota pelo respectivo peso e some os resultados para obter uma nota final entre 0 e 20. Em seguida, apresente uma tabela com as colunas "Critério", "Nota (0-5)", "Peso" e "Parcial" (nota multiplicada pelo peso), e por fim informe a nota final e um comentário geral detalhado sobre o desempenho do estudante.
-Transcrição:
-${fullTranscript}
-      `;
+      const payload = {
+        transcriptHistory: transcriptHistory,
+        stationInfo: {
+          Disciplina: selectedStation["Disciplina"],
+          Tema: selectedStation["Tema"],
+          Probabilidade: selectedStation["Probabilidade"],
+          Vinheta: selectedStation["Vinheta"],
+          Ator: selectedStation["Ator"],
+          Critérios: selectedStation["Critérios"]
+        }
+      };
       try {
-        const res = await fetch("https://api.openai.com/v1/chat/completions", {
+        const res = await fetch(`${BACKEND_URL}/api/evaluate/conversation`, {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${OPENAI_API_KEY}`
-          },
-          body: JSON.stringify({
-            model: "gpt-4",
-            messages: [{ role: "user", content: prompt }],
-            max_tokens: 300,
-            temperature: 0.5
-          })
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
         });
         const data = await res.json();
-        const evaluation = data.choices?.[0]?.message?.content;
+        const evaluation = data.evaluation;
         evaluationLoading.style.display = "none";
         if (evaluation) {
           evaluationResult.innerHTML = `<h3>Feedback do Avaliador</h3><p>${evaluation}</p>`;
@@ -558,6 +529,22 @@ ${fullTranscript}
       }
     }
     
+    /********* TTS (Doente) *********/
+    function playPatientAudio(text) {
+      if (useElevenLabs) {
+        // ElevenLabs TTS logic would be implemented here.
+      } else {
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.lang = "pt-PT";
+        utterance.rate = 1;
+        utterance.pitch = 1;
+        utterance.onstart = () => { startDoenteAnimation(); }
+        utterance.onend = () => { stopDoenteAnimation(); }
+        speechSynthesis.speak(utterance);
+      }
+    }
+    
+    /********* CRITERIA PARSING & DISPLAY *********/
     function parseAndDisplayCriteria(criteriaText) {
       if (!criteriaText) return;
       const parts = criteriaText.split("_").map(s => s.trim()).filter(s => s);
@@ -578,6 +565,7 @@ ${fullTranscript}
       criteriaContainer.innerHTML = html;
     }
     
+    /********* PDF GENERATION & RESTART *********/
     downloadPdfBtn.addEventListener("click", () => {
       const { jsPDF } = window.jspdf;
       const doc = new jsPDF({ unit: "pt", format: "a4" });
